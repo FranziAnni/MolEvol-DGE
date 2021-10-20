@@ -3,7 +3,7 @@ A simple DESeq2 wrapper for teaching purposes
 
 To install, open `R` and install required packages:
 
-```
+```R
 install.packages(c(
   "shiny",
   "DT",
@@ -24,7 +24,7 @@ BiocManager::install("DESeq2")
 
 To run the app, type 
 
-```
-shiny::runGitHub("FranziAnni/MolEvol-DGE")`
+```R
+shiny::runUrl("https://github.com/FranziAnni/MolEvol-DGE/archive/refs/heads/main.zip")
 ```
 
