@@ -15,7 +15,7 @@ install.packages(c(
   "shinythemes",
   "ggrepel",
   "ggpubr",
-  "pheatmap",
+  "ggheatmap",
   "ggplotify"), dependencies = TRUE)
   
 if(!requireNamespace("BiocManager", quietly = TRUE))
