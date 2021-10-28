@@ -10,13 +10,13 @@ suppressMessages({
   library(shinythemes)
   library(ggrepel)
   library(ggpubr)
-  library(pheatmap)
-  library(ggplotify)
+  library(ggheatmap)
 })
 
 # Define UI for application that draws a histogram
 ui <- navbarPage("MolEvol – DGE",
   footer = fluidRow(
+    hr(), 
     column(2, tags$b("OVERALL PROGRESS:")),
     column(1, uiOutput("footer1")),
     column(1, uiOutput("footer2")),
@@ -57,9 +57,9 @@ ui <- navbarPage("MolEvol – DGE",
       column(
         3,
         h3("Filter genes"),
-        h4("Remove loci for which:"),
+        h4("Keep only loci for which:"),
         wellPanel(
-          numericInput("filtnum", value = NA, label = "This many samples:"),
+          numericInput("filtnum", value = NA, label = "At most this many samples:"),
           numericInput("filtreads", value = NA, label = "have this many or fewer mapped reads:")
         ),
         h3("Apply filter"),
@@ -79,7 +79,7 @@ ui <- navbarPage("MolEvol – DGE",
     )
   ),
   tabPanel(
-    "PCA",
+    "EDA",
     fluidRow(
       column(
         3,
@@ -88,10 +88,10 @@ ui <- navbarPage("MolEvol – DGE",
       column(
         9,
         shinycssloaders::withSpinner(
-          plotOutput("PCA", width = "1000px", height = "800px")
+          plotOutput("EDA", width = "1000px", height = "900px")
         ),
         conditionalPanel(
-          condition = "output.PCA", downloadButton("pcadown", "Download this plot")
+          condition = "output.EDA", downloadButton("pcadown", "Download this plot")
         )
       )
     )
@@ -153,11 +153,19 @@ ui <- navbarPage("MolEvol – DGE",
       )
     )
   ),
-  hr(),
+#  hr(),
 )
 
-server <- function(input, output, server) {
+server <- function(input, output, server, session) {
+  
+  # increase maximum upload size
   options(shiny.maxRequestSize = 500 * 1024^2)
+  
+  # shut down R session when browser window is closed
+  session$onSessionEnded(function() {
+    stopApp()
+  })
+  
 
   countstab <- reactive({
     req(input$countfile$datapath)
@@ -244,7 +252,7 @@ server <- function(input, output, server) {
       xlim(c(0, 200)) +
       ggtitle(paste("Before filtering:", nrow(countstab()), "genes")) +
       xlab("Observed counts") +
-      theme_light(base_size = 20)
+      theme_light(base_size = 18)
 
     pB <- filttab %>%
       mutate(total = rowSums(across(where(is.numeric)))) %>%
@@ -253,7 +261,7 @@ server <- function(input, output, server) {
       xlim(c(0, 200)) +
       xlab("Observed counts") +
       ggtitle(paste("After filtering:", nrow(filttab), "genes")) +
-      theme_light(base_size = 20)
+      theme_light(base_size = 18)
 
     pA / pB
   })
@@ -278,10 +286,10 @@ server <- function(input, output, server) {
       pointsize = 6,
       pointshape = 19,
       repel = TRUE,
-      title = "PCA",
+      title = "EDA",
       col.circle = NA
     ) +
-      theme_light(base_size = 20) +
+      theme_light(base_size = 18) +
       theme(legend.title = element_blank())
 
     tab1.1 <- as.data.frame(cmdscale(dist(scale(t(tab1))))) %>%
@@ -293,42 +301,113 @@ server <- function(input, output, server) {
       ggplot(aes(x = V1, y = V2, col = sample.type, label = sample)) +
       geom_point(size = 6) +
       geom_text_repel(size = 4, force = 50) +
-      theme_light(base_size = 20) +
+      theme_light(base_size = 18) +
       theme(
         axis.title = element_blank(),
         legend.title = element_blank()
       ) +
       ggtitle("MDS")
 
-    hmcolors <- c(
-      "#000004FF", "#1B0C42FF", "#4B0C6BFF", "#781C6DFF", "#A52C60FF",
-      "#CF4446FF", "#ED6925FF", "#FB9A06FF", "#F7D03CFF", "#FCFFA4FF"
-    )
-    set.seed(2)
-
-    p3a <- pheatmap::pheatmap(scale(as.matrix((tab1))),
-      kmeans_k = 100,
+    hmcolors <-  c("#000004FF", "#1B0C42FF", "#4B0C6BFF", "#781C6DFF", "#A52C60FF", 
+                   "#CF4446FF", "#ED6925FF", "#FB9A06FF", "#F7D03CFF", "#FCFFA4FF")
+    
+    set.seed(3)
+    kres <- kmeans(as.matrix(tab1), 100)
+    gg_color_hue <- function(n) {
+      hues = seq(15, 375, length = n + 1)
+      hcl(h = hues, l = 65, c = 100)[1:n]
+    }
+    vec1 <- gg_color_hue(length(unique(tab2$sample.type)))
+    names(vec1) <- sort(unique(tab2$sample.type))
+    list1 <- list()
+    list1$sample.type <- vec1
+    plotlist <- ggheatmap(
+      kres$centers,
+      legendName="",
+      border = "white", 
       scale = "row",
-      color = hmcolors,
-      cluster_rows = T,
-      annotation_col = tab2,
-      show_rownames = FALSE,
-      main = "Heatmap"
-    )
+      color = hmcolors, 
+      cluster_rows = T, 
+      cluster_cols = T,
+      annotation_cols = tab2,
+      annotation_color = list1) 
+    
+    plotlist$plotlist[[1]] <- plotlist$plotlist[[1]] + 
+      theme_light(base_size = 18) + 
+      theme(axis.text.y = element_blank(),
+            axis.text.x = element_text(angle = 90, hjust = 1),
+            axis.title = element_blank(),
+            panel.grid.major = element_blank(),
+            panel.grid.minor = element_blank(),
+            panel.border = element_blank(),
+            axis.ticks = element_blank())
+    
+    plotlist$plotlist[[2]] <- plotlist$plotlist[[2]] + 
+      theme_void(base_size = 18)+
+      theme(legend.title = element_blank())
+    
+    plotlist$plotlist[[4]] <- plotlist$plotlist[[4]] + 
+      theme_void(base_size = 18) + ggtitle("Heatmap\n")
+    
+    p3 <- ggplotify::as.ggplot(plotlist)
 
-    p3 <- ggplotify::as.ggplot(p3a)
-
-    (p1 / p2) | p3
+    layout <- "
+      ##CCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      AACCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      BBCCC
+      ##CCC
+      "
+          
+    p1 + p2 + p3 + plot_layout(design = layout)
+    
   })
 
-  output$PCA <- renderPlot({
+  output$EDA <- renderPlot({
     pcaplot()
   })
 
   output$pcadown <- downloadHandler(
     filename = "pca.mds.pdf",
     content = function(file5) {
-      pdf(file5, width = 1200 / 72, height = 600 / 72)
+      pdf(file5, width = 1000 / 72, height = 800 / 72)
       print(pcaplot())
       dev.off()
     }
@@ -429,12 +508,12 @@ server <- function(input, output, server) {
 
   maplot <- reactive({
     req(deg.table())
-    p1 <- ggmaplot(results(deg.table()),
+    p1 <- ggpubr::ggmaplot(results(deg.table()),
       size = 1,
       fdr = input$pvalue,
       top = 0
     ) +
-      theme_light(base_size = 20) +
+      theme_light(base_size = 18) +
       ggtitle("MA plot",
         subtitle = paste(compare$group1, "vs.", compare$group2)
       )
@@ -443,7 +522,7 @@ server <- function(input, output, server) {
       ggplot(aes(x = padj)) +
       geom_histogram(bins = 100) +
       geom_vline(xintercept = input$pvalue, col = "red") +
-      theme_light(base_size = 20) +
+      theme_light(base_size = 18) +
       ggtitle("Histogram of p-values",
         subtitle = paste(compare$group1, "vs.", compare$group2)
       )
@@ -504,7 +583,7 @@ server <- function(input, output, server) {
   )
 
   textcolors <- reactiveValues(
-    data = "grey",
+    data = "gray",
     filter = "gray",
     pca = "gray",
     dge = "gray",
@@ -544,7 +623,7 @@ server <- function(input, output, server) {
     "FILTERING > "
   })
   output$message3 <- renderText({
-    "PCA > "
+    "EDA > "
   })
   output$message4 <- renderText({
     "DGE > "
