@@ -16,7 +16,7 @@ install.packages(c(
   "ggrepel",
   "ggpubr",
   "pheatmap",
-  "ggplotify")), dependencies = TRUE)
+  "ggplotify"), dependencies = TRUE)
   
 if(!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
