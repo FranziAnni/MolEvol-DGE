@@ -9,16 +9,21 @@ suppressMessages({
   library(shinycssloaders)
   library(shinythemes)
   library(ggrepel)
-  library(gridExtra)
+  library(ggpubr)
+  library(pheatmap)
+  library(ggplotify)
 })
 
 # Define UI for application that draws a histogram
-ui <- navbarPage("MolEvol – DGE", footer = fluidRow(column(2, tags$b("OVERALL PROGRESS:")),
-                                                    column(1, uiOutput("footer1")),
-                                                    column(1, uiOutput("footer2")),
-                                                    column(1, uiOutput("footer3")),
-                                                    column(1, uiOutput("footer4")),
-                                                    column(1, uiOutput("footer5"))), 
+ui <- navbarPage("MolEvol – DGE",
+  footer = fluidRow(
+    column(2, tags$b("OVERALL PROGRESS:")),
+    column(1, uiOutput("footer1")),
+    column(1, uiOutput("footer2")),
+    column(1, uiOutput("footer3")),
+    column(1, uiOutput("footer4")),
+    column(1, uiOutput("footer5"))
+  ),
   theme = shinytheme("yeti"),
   tabPanel(
     "Data upload",
@@ -66,16 +71,31 @@ ui <- navbarPage("MolEvol – DGE", footer = fluidRow(column(2, tags$b("OVERALL 
         )
       ),
       column(
-        9, 
+        9,
         shinycssloaders::withSpinner(plotOutput("filtplot", width = "1000px", height = "600px")),
         conditionalPanel(condition = "output.counts", h3("Preview of filtered dataset")),
         DT::dataTableOutput("filtlook")
       )
     )
   ),
-  tabPanel("PCA", shinycssloaders::withSpinner(
-    plotOutput("PCA", width = "1200px", height = "600px")
-  )),
+  tabPanel(
+    "PCA",
+    fluidRow(
+      column(
+        3,
+        actionButton("plotpca", "Plot now")
+      ),
+      column(
+        9,
+        shinycssloaders::withSpinner(
+          plotOutput("PCA", width = "1000px", height = "800px")
+        ),
+        conditionalPanel(
+          condition = "output.PCA", downloadButton("pcadown", "Download this plot")
+        )
+      )
+    )
+  ),
   tabPanel(
     "DGE",
     fluidRow(
@@ -93,15 +113,19 @@ ui <- navbarPage("MolEvol – DGE", footer = fluidRow(column(2, tags$b("OVERALL 
           hr(),
           sliderInput("pvalue", "Set pvalue cutoff", value = 0.05, min = 0, max = 0.1, step = 0.01),
           downloadButton("siggenes", "Download DGEs")
-          
         )
       ),
       column(
         9,
-        shinycssloaders::withSpinner(DT::dataTableOutput("samples")),
+        shinycssloaders::withSpinner(DT::dataTableOutput("samples"),
+          image = sample(list.files("www"), 1),
+          image.height = "200px"
+        ),
+        hr(),
         conditionalPanel(
           condition = "output.samples",
-          shinycssloaders::withSpinner(plotOutput("MA", width = "50%"))
+          shinycssloaders::withSpinner(plotOutput("MA", width = "100%")),
+          downloadButton("madown", "Download this plot")
         )
       )
     )
@@ -130,7 +154,6 @@ ui <- navbarPage("MolEvol – DGE", footer = fluidRow(column(2, tags$b("OVERALL 
     )
   ),
   hr(),
-  
 )
 
 server <- function(input, output, server) {
@@ -170,6 +193,10 @@ server <- function(input, output, server) {
 
   observeEvent(countstab(), {
     filttab$filt <- countstab()
+  })
+
+  observeEvent(metatab(), {
+    filttab$meta <- metatab()
   })
 
   observeEvent(input$filter, {
@@ -214,7 +241,7 @@ server <- function(input, output, server) {
       mutate(total = rowSums(across(where(is.numeric)))) %>%
       ggplot(aes(x = total)) +
       geom_density() +
-      xlim(c(0, 500)) +
+      xlim(c(0, 200)) +
       ggtitle(paste("Before filtering:", nrow(countstab()), "genes")) +
       xlab("Observed counts") +
       theme_light(base_size = 20)
@@ -223,7 +250,7 @@ server <- function(input, output, server) {
       mutate(total = rowSums(across(where(is.numeric)))) %>%
       ggplot(aes(x = total)) +
       geom_density() +
-      xlim(c(0, 500)) +
+      xlim(c(0, 200)) +
       xlab("Observed counts") +
       ggtitle(paste("After filtering:", nrow(filttab), "genes")) +
       theme_light(base_size = 20)
@@ -231,27 +258,28 @@ server <- function(input, output, server) {
     pA / pB
   })
 
-  pcaplot <- reactive({
-    req(metatab())
+  pcaplot <- eventReactive(input$plotpca, {
+    req(filttab$meta)
     req(filttab$filt)
     rownames(filttab$filt) <- c()
     tab1 <- filttab$filt %>%
       column_to_rownames(var = colnames(filttab$filt)[1])
-    tab2 <- metatab() %>%
-      column_to_rownames(var = colnames(metatab())[1])
-    colnames(tab2) <- "condition"
-    pca.res <- prcomp(tab1, scale. = TRUE)
-    fviz_eig(pca.res)
-    fviz_contrib(pca.res, "var", axes = c(1, 2))
-    p1 <- fviz_pca_var(pca.res,
-      col.var = tab2$condition,
-      geom = c("text", "point"),
+    tab2 <- filttab$meta %>%
+      column_to_rownames(var = colnames(filttab$meta)[1])
+    colnames(tab2) <- "sample.type"
+    pca.res <- prcomp(tab1, scale = TRUE)
+
+    p1 <- fviz_pca_biplot(pca.res,
+      invisible = "ind",
+      col.var = tab2$sample.type,
+      geom.var = c("text", "point"),
       addEllipses = FALSE,
       labelsize = 4,
       pointsize = 6,
       pointshape = 19,
       repel = TRUE,
-      title = "PCA"
+      title = "PCA",
+      col.circle = NA
     ) +
       theme_light(base_size = 20) +
       theme(legend.title = element_blank())
@@ -260,8 +288,9 @@ server <- function(input, output, server) {
       rownames_to_column(var = "sample")
     tab2.1 <- tab2 %>%
       rownames_to_column(var = "sample")
+
     p2 <- full_join(tab2.1, tab1.1) %>%
-      ggplot(aes(x = V1, y = V2, col = condition, label = sample)) +
+      ggplot(aes(x = V1, y = V2, col = sample.type, label = sample)) +
       geom_point(size = 6) +
       geom_text_repel(size = 4, force = 50) +
       theme_light(base_size = 20) +
@@ -271,13 +300,40 @@ server <- function(input, output, server) {
       ) +
       ggtitle("MDS")
 
-    p1 | p2
+    hmcolors <- c(
+      "#000004FF", "#1B0C42FF", "#4B0C6BFF", "#781C6DFF", "#A52C60FF",
+      "#CF4446FF", "#ED6925FF", "#FB9A06FF", "#F7D03CFF", "#FCFFA4FF"
+    )
+    set.seed(2)
+
+    p3a <- pheatmap::pheatmap(scale(as.matrix((tab1))),
+      kmeans_k = 100,
+      scale = "row",
+      color = hmcolors,
+      cluster_rows = T,
+      annotation_col = tab2,
+      show_rownames = FALSE,
+      main = "Heatmap"
+    )
+
+    p3 <- ggplotify::as.ggplot(p3a)
+
+    (p1 / p2) | p3
   })
 
   output$PCA <- renderPlot({
     pcaplot()
   })
-  
+
+  output$pcadown <- downloadHandler(
+    filename = "pca.mds.pdf",
+    content = function(file5) {
+      pdf(file5, width = 1200 / 72, height = 600 / 72)
+      print(pcaplot())
+      dev.off()
+    }
+  )
+
   output$group1 <- renderUI({
     req(metatab())
     req(countstab())
@@ -319,14 +375,14 @@ server <- function(input, output, server) {
       column_to_rownames(var = colnames(filttab$filt)[1])
     tab2 <- metatab() %>%
       column_to_rownames(var = colnames(metatab())[1])
-    colnames(tab2) <- "condition"
-    tab2$condition <- factor(tab2$condition)
-    tab2$condition <- relevel(tab2$condition, ref = group1)
-    samples_filt <- rownames(filter(tab2, condition %in% c(group1, group2)))
+    colnames(tab2) <- "sample.type"
+    tab2$sample.type <- factor(tab2$sample.type)
+    tab2$sample.type <- relevel(tab2$sample.type, ref = group1)
+    samples_filt <- rownames(filter(tab2, sample.type %in% c(group1, group2)))
     dds <- DESeqDataSetFromMatrix(
       countData = round(select(tab1, samples_filt)),
-      colData = filter(tab2, condition %in% c(group1, group2)),
-      design = ~condition
+      colData = filter(tab2, sample.type %in% c(group1, group2)),
+      design = ~sample.type
     )
     DESeq(dds)
   })
@@ -337,17 +393,19 @@ server <- function(input, output, server) {
       select(row, log2FoldChange, pvalue, padj)
   })
 
-  output$samples <- DT::renderDataTable(
-    {
-      DT::datatable(restab(),
-                    caption = htmltools::tags$caption(
-                      style = 'font-size: 24px; font-weight: bold',
-                      paste(compare$group1, "vs.", compare$group2)),
-                    selection = "none") %>% 
-        DT::formatStyle("padj", target = "row", 
-                        backgroundColor = styleInterval(input$pvalue, c("#b9db92", "white")))
-    }
-  )
+  output$samples <- DT::renderDataTable({
+    DT::datatable(restab(),
+      caption = htmltools::tags$caption(
+        style = "font-size: 24px; font-weight: bold",
+        paste(compare$group1, "vs.", compare$group2)
+      ),
+      selection = "none"
+    ) %>%
+      DT::formatStyle("padj",
+        target = "row",
+        backgroundColor = styleInterval(input$pvalue, c("#b9db92", "white"))
+      )
+  })
 
   output$dgedown <- downloadHandler(
     filename = paste0(compare$group1, ".vs.", compare$group2, ".dge.csv"),
@@ -363,19 +421,48 @@ server <- function(input, output, server) {
     filename = paste0(compare$group1, ".vs.", compare$group2, ".", input$pvalue, ".SIGN.csv"),
     content = function(file2) {
       write.table(filter(restab(), padj <= input$pvalue),
-                  quote = FALSE, row.names = FALSE, sep = ",",
-                  file = file2, append = FALSE
+        quote = FALSE, row.names = FALSE, sep = ",",
+        file = file2, append = FALSE
       )
     }
   )
-  
-  output$MA <- renderPlot({
+
+  maplot <- reactive({
     req(deg.table())
-    plotMA(deg.table(),
-      main = paste(compare$group1, "vs.", compare$group2),
-      colSig = "red"
-    )
+    p1 <- ggmaplot(results(deg.table()),
+      size = 1,
+      fdr = input$pvalue,
+      top = 0
+    ) +
+      theme_light(base_size = 20) +
+      ggtitle("MA plot",
+        subtitle = paste(compare$group1, "vs.", compare$group2)
+      )
+
+    p2 <- restab() %>%
+      ggplot(aes(x = padj)) +
+      geom_histogram(bins = 100) +
+      geom_vline(xintercept = input$pvalue, col = "red") +
+      theme_light(base_size = 20) +
+      ggtitle("Histogram of p-values",
+        subtitle = paste(compare$group1, "vs.", compare$group2)
+      )
+
+    p1 | p2
   })
+
+  output$MA <- renderPlot({
+    maplot()
+  })
+
+  output$madown <- downloadHandler(
+    filename = paste0(compare$group1, ".vs.", compare$group2, ".", input$pvalue, ".pdf"),
+    content = function(file4) {
+      pdf(file4, width = 1200 / 72, height = 600 / 72)
+      print(maplot())
+      dev.off()
+    }
+  )
 
   genelist <- eventReactive(input$countplot, {
     genelist <- as.character(stringr::str_split(input$genelist, "\n", simplify = TRUE))
@@ -389,7 +476,7 @@ server <- function(input, output, server) {
     genelist <- list()
     for (i in 1:length(genes)) {
       df1 <- plotCounts(deg.table(),
-        gene = genes[i], intgroup = "condition",
+        gene = genes[i], intgroup = "sample.type",
         returnData = TRUE
       )
       df1$geneID <- genes[i]
@@ -397,7 +484,7 @@ server <- function(input, output, server) {
     }
     genelist %>%
       purrr::reduce(full_join) %>%
-      ggplot(aes(x = condition, y = count, colour = condition)) +
+      ggplot(aes(x = sample.type, y = count, colour = sample.type)) +
       geom_point(size = input$plotsize / 3) +
       facet_wrap(~geneID, scales = "free_y") +
       theme_light(base_size = input$plotsize)
@@ -411,45 +498,61 @@ server <- function(input, output, server) {
     filename = "counts.pdf",
     content = function(file3) {
       pdf(file3, width = 800 / 72, height = 800 / 72)
-      grid.arrange(countP(), ncol = 1)
+      print(countP())
       dev.off()
     }
   )
-  
-  textcolors <- reactiveValues(data = "grey", 
-                               filter = "gray",
-                               pca = "gray",
-                               dge = "gray",
-                               plots = "gray")
-  
-  observeEvent({
-    countstab() 
-    metatab()},{
-    textcolors$data <- "green"
-  })
-  
-  observeEvent(input$filter,{
+
+  textcolors <- reactiveValues(
+    data = "grey",
+    filter = "gray",
+    pca = "gray",
+    dge = "gray",
+    plots = "gray"
+  )
+
+  observeEvent(
+    {
+      countstab()
+      metatab()
+    },
+    {
+      textcolors$data <- "green"
+    }
+  )
+
+  observeEvent(input$filter, {
     textcolors$filter <- "green"
   })
-  
-  observeEvent(pcaplot(),{
+
+  observeEvent(pcaplot(), {
     textcolors$pca <- "green"
   })
-  
-  observeEvent(restab(),{
+
+  observeEvent(restab(), {
     textcolors$dge <- "green"
   })
-  
-  observeEvent(input$countplot,{
+
+  observeEvent(input$countplot, {
     textcolors$plots <- "green"
   })
-  
-  output$message1 <- renderText({"| DATA > "})
-  output$message2 <- renderText({"FILTERING > "})
-  output$message3 <- renderText({"PCA > "})
-  output$message4 <- renderText({"DGE > "})
-  output$message5 <- renderText({"PLOTS |"})
-  
+
+  output$message1 <- renderText({
+    "| DATA > "
+  })
+  output$message2 <- renderText({
+    "FILTERING > "
+  })
+  output$message3 <- renderText({
+    "PCA > "
+  })
+  output$message4 <- renderText({
+    "DGE > "
+  })
+  output$message5 <- renderText({
+    "PLOTS |"
+  })
+
   output$footer1 <- renderUI({
     span(textOutput("message1"), style = paste("color:", textcolors$data))
   })
