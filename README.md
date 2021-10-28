@@ -14,7 +14,9 @@ install.packages(c(
   "shinycssloaders",
   "shinythemes",
   "ggrepel",
-  "gridExtra"), dependencies = TRUE)
+  "ggpubr",
+  "pheatmap",
+  "ggplotify")), dependencies = TRUE)
   
 if(!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
