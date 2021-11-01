@@ -11,13 +11,14 @@ suppressMessages({
   library(ggrepel)
   library(ggpubr)
   library(ggheatmap)
+  library(ggplotify)
 })
 
 # Define UI for application that draws a histogram
 ui <- navbarPage("MolEvol – DGE",
   footer = fluidRow(
-    hr(), 
-    column(2, tags$b("OVERALL PROGRESS:")),
+    hr(),
+    column(2, HTML("<center><b>OVERALL<br>PROGRESS</b></center>")),
     column(1, uiOutput("footer1")),
     column(1, uiOutput("footer2")),
     column(1, uiOutput("footer3")),
@@ -32,8 +33,29 @@ ui <- navbarPage("MolEvol – DGE",
         3,
         h3("Upload a file with counts and metadata to start"),
         wellPanel(
+          div(style = "float:right", actionLink("filebutton", "", icon = icon("info-circle", lib = "font-awesome"))),
           fileInput("countfile", "Select counts file"),
-          fileInput("metafile", "Select metadata file")
+          radioButtons("countsep",
+            label = "Column separator",
+            inline = TRUE,
+            choices = c(
+              "<TAB>" = "\t",
+              "comma" = ",",
+              "semi-colon" = ";"
+            ),
+            selected = "\t"
+          ),
+          hr(),
+          fileInput("metafile", "Select metadata file"),
+          radioButtons("metasep",
+            label = "Column separator",
+            inline = TRUE,
+            choices = c(
+              "<TAB>" = "\t",
+              "comma" = ",",
+              "semi-colon" = ";"
+            )
+          )
         )
       ),
       column(
@@ -59,7 +81,8 @@ ui <- navbarPage("MolEvol – DGE",
         h3("Filter genes"),
         h4("Keep only loci for which:"),
         wellPanel(
-          numericInput("filtnum", value = NA, label = "At most this many samples:"),
+          div(style = "float:right", actionLink("filterbutton", "", icon = icon("info-circle", lib = "font-awesome"))),
+          numericInput("filtnum", value = NA, label = "Not more than this many samples:"),
           numericInput("filtreads", value = NA, label = "have this many or fewer mapped reads:")
         ),
         h3("Apply filter"),
@@ -83,6 +106,9 @@ ui <- navbarPage("MolEvol – DGE",
     fluidRow(
       column(
         3,
+        h3("Exploratory data analysis"),
+        h4("These plots will give you an idea of how your data is structured"),
+        sliderInput("kmeans", "Number of gene clusters for heatmap", 50, 2000, 100, step = 50),
         actionButton("plotpca", "Plot now")
       ),
       column(
@@ -104,7 +130,10 @@ ui <- navbarPage("MolEvol – DGE",
         h3("Determine differentially expressed genes"),
         wellPanel(
           uiOutput("group1"), uiOutput("group2"),
-          actionButton("calc.dge", "Start DESeq2 calculation")
+          conditionalPanel(
+            condition = "output.group2",
+            actionButton("calc.dge", "Start DESeq2 calculation")
+          )
         ),
         conditionalPanel(
           condition = "output.samples",
@@ -153,23 +182,36 @@ ui <- navbarPage("MolEvol – DGE",
       )
     )
   ),
-#  hr(),
+  tabPanel("About", fluidRow(column(5, includeMarkdown("about.md"))))
 )
 
 server <- function(input, output, server, session) {
-  
+
   # increase maximum upload size
   options(shiny.maxRequestSize = 500 * 1024^2)
-  
+
   # shut down R session when browser window is closed
   session$onSessionEnded(function() {
     stopApp()
   })
-  
+
+  observeEvent(input$filebutton, {
+    showModal(modalDialog(
+      title = "Format of input files",
+      "The counts file should have 1 line per gene and 1 column per sample.
+    The first column should contain the gene names. The metadata file
+    should list the sample names in the first column, and the variable
+    assignment in the second column. Both files should have column headers. 
+    Change the column delimiter according to your data.  
+    \n\nPlease note that the gene names in counts and metadata files must match!",
+      size = "m",
+      icon = icon("info-circle", lib = "font-awesome")
+    ))
+  })
 
   countstab <- reactive({
     req(input$countfile$datapath)
-    read.table(input$countfile$datapath, header = TRUE, sep = "\t")
+    read.table(input$countfile$datapath, header = TRUE, sep = input$countsep)
   })
 
   output$counts <- DT::renderDataTable(
@@ -184,7 +226,7 @@ server <- function(input, output, server, session) {
 
   metatab <- reactive({
     req(input$metafile$datapath)
-    read.table(input$metafile$datapath, header = TRUE, sep = "\t")
+    read.table(input$metafile$datapath, header = TRUE, sep = input$metasep)
   })
 
   output$meta <- DT::renderDataTable(
@@ -205,6 +247,22 @@ server <- function(input, output, server, session) {
 
   observeEvent(metatab(), {
     filttab$meta <- metatab()
+  })
+
+  observeEvent(input$filterbutton, {
+    showModal(modalDialog(
+      title = "Filtering your data",
+      HTML("It is often advisable to filter out genes with very low counts and/or
+      those loci that only have mapped reads in a minority of your samples.
+      Here you can specify a cutoff for filtering loci by the number of mapped
+      reads per sample. The filtering will be stricter with lower sample
+      numbers and higher read numbers.<br><br>For example, to keep only loci that
+      have mapped reads in all of the samples, you would specify '0' and '0'
+      for samples and reads, respectively. If you only wanted loci for which at
+      least half of your 10 samples have mapped reads, you would specify '5' and '0'."),
+      size = "m",
+      icon = icon("info-circle", lib = "font-awesome")
+    ))
   })
 
   observeEvent(input$filter, {
@@ -286,7 +344,7 @@ server <- function(input, output, server, session) {
       pointsize = 6,
       pointshape = 19,
       repel = TRUE,
-      title = "EDA",
+      title = "PCA",
       col.circle = NA
     ) +
       theme_light(base_size = 18) +
@@ -308,13 +366,15 @@ server <- function(input, output, server, session) {
       ) +
       ggtitle("MDS")
 
-    hmcolors <-  c("#000004FF", "#1B0C42FF", "#4B0C6BFF", "#781C6DFF", "#A52C60FF", 
-                   "#CF4446FF", "#ED6925FF", "#FB9A06FF", "#F7D03CFF", "#FCFFA4FF")
-    
+    hmcolors <- c(
+      "#000004FF", "#1B0C42FF", "#4B0C6BFF", "#781C6DFF", "#A52C60FF",
+      "#CF4446FF", "#ED6925FF", "#FB9A06FF", "#F7D03CFF", "#FCFFA4FF"
+    )
+
     set.seed(3)
-    kres <- kmeans(as.matrix(tab1), 100)
+    kres <- kmeans(as.matrix(tab1), input$kmeans)
     gg_color_hue <- function(n) {
-      hues = seq(15, 375, length = n + 1)
+      hues <- seq(15, 375, length = n + 1)
       hcl(h = hues, l = 65, c = 100)[1:n]
     }
     vec1 <- gg_color_hue(length(unique(tab2$sample.type)))
@@ -323,32 +383,35 @@ server <- function(input, output, server, session) {
     list1$sample.type <- vec1
     plotlist <- ggheatmap(
       kres$centers,
-      legendName="",
-      border = "white", 
+      legendName = "",
+      border = "white",
       scale = "row",
-      color = hmcolors, 
-      cluster_rows = T, 
+      color = hmcolors,
+      cluster_rows = T,
       cluster_cols = T,
       annotation_cols = tab2,
-      annotation_color = list1) 
-    
-    plotlist$plotlist[[1]] <- plotlist$plotlist[[1]] + 
-      theme_light(base_size = 18) + 
-      theme(axis.text.y = element_blank(),
-            axis.text.x = element_text(angle = 90, hjust = 1),
-            axis.title = element_blank(),
-            panel.grid.major = element_blank(),
-            panel.grid.minor = element_blank(),
-            panel.border = element_blank(),
-            axis.ticks = element_blank())
-    
-    plotlist$plotlist[[2]] <- plotlist$plotlist[[2]] + 
-      theme_void(base_size = 18)+
+      annotation_color = list1
+    )
+
+    plotlist$plotlist[[1]] <- plotlist$plotlist[[1]] +
+      theme_light(base_size = 18) +
+      theme(
+        axis.text.y = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        axis.ticks = element_blank()
+      )
+
+    plotlist$plotlist[[2]] <- plotlist$plotlist[[2]] +
+      theme_void(base_size = 18) +
       theme(legend.title = element_blank())
-    
-    plotlist$plotlist[[4]] <- plotlist$plotlist[[4]] + 
+
+    plotlist$plotlist[[4]] <- plotlist$plotlist[[4]] +
       theme_void(base_size = 18) + ggtitle("Heatmap\n")
-    
+
     p3 <- ggplotify::as.ggplot(plotlist)
 
     layout <- "
@@ -395,9 +458,8 @@ server <- function(input, output, server, session) {
       BBCCC
       ##CCC
       "
-          
+
     p1 + p2 + p3 + plot_layout(design = layout)
-    
   })
 
   output$EDA <- renderPlot({
@@ -583,11 +645,11 @@ server <- function(input, output, server, session) {
   )
 
   textcolors <- reactiveValues(
-    data = "gray",
-    filter = "gray",
-    pca = "gray",
-    dge = "gray",
-    plots = "gray"
+    data = "#D8D8D8",
+    filter = "#D8D8D8",
+    pca = "#D8D8D8",
+    dge = "#D8D8D8",
+    plots = "#D8D8D8"
   )
 
   observeEvent(
@@ -596,56 +658,56 @@ server <- function(input, output, server, session) {
       metatab()
     },
     {
-      textcolors$data <- "green"
+      textcolors$data <- "#b9db92"
     }
   )
 
   observeEvent(input$filter, {
-    textcolors$filter <- "green"
+    textcolors$filter <- "#b9db92"
   })
 
   observeEvent(pcaplot(), {
-    textcolors$pca <- "green"
+    textcolors$pca <- "#b9db92"
   })
 
   observeEvent(restab(), {
-    textcolors$dge <- "green"
+    textcolors$dge <- "#b9db92"
   })
 
   observeEvent(input$countplot, {
-    textcolors$plots <- "green"
+    textcolors$plots <- "#b9db92"
   })
 
   output$message1 <- renderText({
-    "| DATA > "
+    "DATA"
   })
   output$message2 <- renderText({
-    "FILTERING > "
+    "FILTER"
   })
   output$message3 <- renderText({
-    "EDA > "
+    "EDA "
   })
   output$message4 <- renderText({
-    "DGE > "
+    "DGE"
   })
   output$message5 <- renderText({
-    "PLOTS |"
+    "PLOTS"
   })
 
   output$footer1 <- renderUI({
-    span(textOutput("message1"), style = paste("color:", textcolors$data))
+    div(textOutput("message1"), style = paste("background-color:", textcolors$data, "; padding: 10px; border-radius: 20px ;text-align: center;"))
   })
   output$footer2 <- renderUI({
-    span(textOutput("message2"), style = paste("color:", textcolors$filter))
+    div(textOutput("message2"), style = paste("background-color:", textcolors$filter, "; padding: 10px; border-radius: 20px ;text-align: center;"))
   })
   output$footer3 <- renderUI({
-    span(textOutput("message3"), style = paste("color:", textcolors$pca))
+    div(textOutput("message3"), style = paste("background-color:", textcolors$pca, "; padding: 10px; border-radius: 20px ;text-align: center;"))
   })
   output$footer4 <- renderUI({
-    span(textOutput("message4"), style = paste("color:", textcolors$dge))
+    div(textOutput("message4"), style = paste("background-color:", textcolors$dge, "; padding: 10px; border-radius: 20px ;text-align: center;"))
   })
   output$footer5 <- renderUI({
-    span(textOutput("message5"), style = paste("color:", textcolors$plots))
+    div(textOutput("message5"), style = paste("background-color:", textcolors$plots, "; padding: 10px; border-radius: 20px ;text-align: center;"))
   })
 }
 
