@@ -226,7 +226,7 @@ server <- function(input, output, server, session) {
 
   metatab <- reactive({
     req(input$metafile$datapath)
-    read.table(input$metafile$datapath, header = TRUE, sep = input$metasep)
+    read.table(input$metafile$datapath, header = TRUE, sep = input$metasep, row.names=NULL)
   })
 
   output$meta <- DT::renderDataTable(
@@ -412,7 +412,26 @@ server <- function(input, output, server, session) {
     plotlist$plotlist[[4]] <- plotlist$plotlist[[4]] +
       theme_void(base_size = 18) + ggtitle("Heatmap\n")
 
-    p3 <- ggplotify::as.ggplot(plotlist)
+    hmlayout <- "
+    #AA
+    #AA
+    #BB
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    DCC
+    "
+    
+    p3 <- plotlist[[4]] + plotlist[[2]] + plotlist[[1]] + plotlist[[3]] + plot_layout(design = hmlayout)
 
     layout <- "
       ##CCC
